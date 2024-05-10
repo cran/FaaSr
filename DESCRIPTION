@@ -1,7 +1,7 @@
 Type: Package
 Package: FaaSr
 Title: FaaS (Function as a Service) Package
-Version: 1.1.2
+Version: 1.2.1
 Authors@R: c(person("Figueiredo", "Renato", role = c("aut", "cre", "ths", "cph"),
                     email = "renatof@ufl.edu",
                     comment = c(ORCID = "0000-0001-9841-6060")),
@@ -36,11 +36,12 @@ Depends: R (>= 3.5.0)
 Imports: jsonlite, httr, uuid, paws.application.integration,
         paws.compute, paws.storage, paws.security.identity, cli,
         jsonvalidate, base64enc, sodium
-Suggests: arrow, glue, rmarkdown, paws.common, testthat, knitr
+Suggests: arrow, glue, rmarkdown, paws.common, testthat, knitr,
+        devtools, utils, methods, withr
 Encoding: UTF-8
 RoxygenNote: 7.2.3
 NeedsCompilation: no
-Packaged: 2024-02-26 18:52:23 UTC; spark
+Packaged: 2024-05-08 20:19:09 UTC; spark
 Author: Figueiredo Renato [aut, cre, ths, cph]
     (<https://orcid.org/0000-0001-9841-6060>),
   Park Sungjae [aut],
@@ -50,4 +51,4 @@ Author: Figueiredo Renato [aut, cre, ths, cph]
   Thomas R. Quinn [aut],
   Carey Cayelan [ctb]
 Repository: CRAN
-Date/Publication: 2024-02-27 17:40:07 UTC
+Date/Publication: 2024-05-10 16:03:13 UTC
