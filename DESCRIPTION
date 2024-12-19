@@ -1,9 +1,9 @@
 Type: Package
 Package: FaaSr
 Title: FaaS (Function as a Service) Package
-Version: 1.3.0
+Version: 1.4.3
 Authors@R: c(person("Figueiredo", "Renato", role = c("aut", "cre", "ths", "cph"),
-                    email = "renatof@ufl.edu",
+                    email = "renato.figueiredo@oregonstate.edu",
                     comment = c(ORCID = "0000-0001-9841-6060")),
              person("Park", "Sungjae", role = "aut", comment = c(ORCID = "0009-0000-5357-804X")),
              person("Mu", "Nan", role = "ctb"),
@@ -12,7 +12,7 @@ Authors@R: c(person("Figueiredo", "Renato", role = c("aut", "cre", "ths", "cph")
              person("Thomas", "R. Quinn", role = "aut"),
              person("Carey", "Cayelan", role = "ctb")
 	     )
-Maintainer: Figueiredo Renato <renatof@ufl.edu>
+Maintainer: Figueiredo Renato <renato.figueiredo@oregonstate.edu>
 Description: Allows users to create and deploy the workflow with multiple functions
     in Function-as-a-Service (FaaS) cloud computing platforms.
     The 'FaaSr' package makes it simpler for R developers to use FaaS platforms by providing the following functionality:
@@ -39,9 +39,9 @@ Imports: jsonlite, httr, uuid, paws.application.integration,
 Suggests: arrow, glue, rmarkdown, paws.common, testthat, knitr,
         devtools, utils, methods, withr
 Encoding: UTF-8
-RoxygenNote: 7.2.3
+RoxygenNote: 7.3.2
 NeedsCompilation: no
-Packaged: 2024-06-10 14:53:37 UTC; spark
+Packaged: 2024-12-19 00:43:11 UTC; rstudio
 Author: Figueiredo Renato [aut, cre, ths, cph]
     (<https://orcid.org/0000-0001-9841-6060>),
   Park Sungjae [aut] (<https://orcid.org/0009-0000-5357-804X>),
@@ -51,4 +51,4 @@ Author: Figueiredo Renato [aut, cre, ths, cph]
   Thomas R. Quinn [aut],
   Carey Cayelan [ctb]
 Repository: CRAN
-Date/Publication: 2024-06-10 15:20:02 UTC
+Date/Publication: 2024-12-19 08:30:11 UTC

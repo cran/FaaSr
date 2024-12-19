@@ -3,6 +3,7 @@ Async
 CMD
 CRON
 ComputeServer
+DOI
 DataStore
 DefaultDataStore
 FaaS
@@ -13,6 +14,7 @@ InvocationID
 JSON
 Javascript
 LoggingServer
+MaxRank
 Minio
 OpenWhisk
 README

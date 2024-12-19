@@ -1,5 +1,51 @@
-workflow_basic_path <- "https://raw.githubusercontent.com/FaaSr/FaaSr-package/main/schema/workflow_template.yml"
-workflow_timer_path <- "https://raw.githubusercontent.com/FaaSr/FaaSr-package/main/schema/workflow_with_cron_template.yml"
+workflow_basic_schema <- "name: Running Action- <<actionname>>
+on:
+  workflow_dispatch:
+    inputs:
+      PAYLOAD:
+        description: 'Payload'
+        required: false
+
+jobs:
+  run_docker_image:
+    runs-on: ubuntu-latest
+    container: <<container_name>>
+    env:
+      SECRET_PAYLOAD: ${{ secrets.SECRET_PAYLOAD }}
+      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+      PAYLOAD_REPO: ${{ vars.PAYLOAD_REPO }}
+      PAYLOAD: ${{ github.event.inputs.PAYLOAD }}
+    steps:
+    - name: run Rscript
+      run: |
+        cd /action
+        Rscript faasr_start_invoke_github-actions.R"
+
+workflow_timer_schema <- "name: Running Action- <<actionname>>
+on:
+  schedule:
+    - cron: '<<cron>>'
+  workflow_dispatch:
+    inputs:
+      PAYLOAD:
+        description: 'Payload'
+        required: false
+
+jobs:
+  run_docker_image:
+    runs-on: ubuntu-latest
+    container: <<container_name>>
+    env:
+      SECRET_PAYLOAD: ${{ secrets.SECRET_PAYLOAD }}
+      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+      PAYLOAD_REPO: ${{ vars.PAYLOAD_REPO }}
+      PAYLOAD: ${{ github.event.inputs.PAYLOAD }}
+    steps:
+    - name: run Rscript
+      run: |
+        cd /action
+        Rscript faasr_start_invoke_github-actions.R"
+
 #TBD. workflow_runner_path <- ""
 #TBD. workflow_runner_w_timer_path <- ""
 
@@ -59,7 +105,7 @@ faasr_register_workflow_github_actions <- function(faasr, cred, cron=NULL, runne
     cli_alert_success("Create github env files")
     # create the payload file
     faasr_register_workflow_github_create_payload(faasr,repo)
-    cli_alert_success("Create github payload file")
+    #cli_alert_success("Create github payload file")
     # create the README file
     faasr_register_workflow_github_create_readme(repo)
     cli_alert_success("Create github REAME file")
@@ -352,13 +398,13 @@ faasr_register_workflow_github_create_yml_file <- function(faasr, actionname, re
     }
   } else {
     if (is.null(cron)){
-      contents_git <- readLines(workflow_basic_path)
+      contents_git <- workflow_basic_schema
     } else {
-      contents_git <- readLines(workflow_timer_path)
+      contents_git <- workflow_timer_schema
     }
   }
   # create customized contents by using "glue"
-  contents_git <- paste(contents_git, collapse = "\n")
+  #contents_git <- paste(contents_git, collapse = "\n")
   contents <- glue::glue(contents_git, .open = "<<", .close = ">>")
   if (!endsWith(actionname,".yml")){
     actionname <- paste0(actionname,".yml")
@@ -380,7 +426,7 @@ faasr_register_workflow_github_create_yml_file <- function(faasr, actionname, re
 faasr_register_workflow_git_local_repo <- function(repo,ref){
   cwd <- getwd()
   on.exit(setwd(cwd))
-  setwd(paste0(faasr_gh_local_repo,"/",repo))
+  setwd(file.path(faasr_gh_local_repo, repo))
   
   # create local git repo
   system("git init", ignore.stderr=TRUE, ignore.stdout=TRUE)
@@ -409,7 +455,7 @@ faasr_register_workflow_git_local_repo <- function(repo,ref){
 faasr_register_workflow_git_remote_repo <- function(token,check,private,repo,ref){
   cwd <- getwd()
   on.exit(setwd(cwd))
-  setwd(paste0(faasr_gh_local_repo,"/",repo))
+  setwd(file.path(faasr_gh_local_repo, repo))
   # get env
   repo_a <- strsplit(repo, "/")
   repo_p <- repo_a[[1]]
@@ -459,7 +505,7 @@ faasr_register_workflow_git_remote_repo <- function(token,check,private,repo,ref
 faasr_register_workflow_git_remote_env <- function(repo, cred, token){
   cwd <- getwd()
   on.exit(setwd(cwd))
-  setwd(paste0(faasr_gh_local_repo,"/",repo))
+  setwd(file.path(faasr_gh_local_repo, repo))
   # get public key
   url <- paste0("repos/",repo,"/actions/secrets/public-key")
   response <- faasr_httr_request(body=body, token=token, url=url, type="GET")
@@ -488,8 +534,7 @@ faasr_register_workflow_git_remote_env <- function(repo, cred, token){
     setwd(cwd)
     stop()
   }
-
-
+  
   # set the repo variable
   url <- paste0("repos/",repo,"/actions/variables")
   body <- list(name="PAYLOAD_REPO", value=paste0(repo,'/payload.json'))
@@ -534,8 +579,6 @@ faasr_workflow_invoke_github <- function(faasr, cred, faas_name, actionname){
 
   # define the required variables.
   token <- cred[[paste0(faas_name,"_TOKEN")]]
-  input_id <- faasr$InvocationID
-  input_faasr_log <- faasr$FaaSrLog
   repo <- paste0(faasr$ComputeServers[[faas_name]]$UserName,"/",faasr$ComputeServers[[faas_name]]$ActionRepoName)
   git_ref <- faasr$ComputeServers[[faas_name]]$Branch
   if (!endsWith(actionname,".yml") && !endsWith(actionname,".yaml")){
@@ -549,9 +592,7 @@ faasr_workflow_invoke_github <- function(faasr, cred, faas_name, actionname){
   body <- list(
     ref = git_ref,
     inputs = list(
-      ID = input_id,
-      InvokeName = actionname,
-      FaaSrLog = input_faasr_log
+      PAYLOAD = jsonlite::toJSON(faasr, auto_unbox=TRUE)
     )
   )
   response <- faasr_httr_request(body=body, token=token, url=url, type="POST")
