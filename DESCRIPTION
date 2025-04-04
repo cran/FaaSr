@@ -1,7 +1,7 @@
 Type: Package
 Package: FaaSr
 Title: FaaS (Function as a Service) Package
-Version: 1.4.3
+Version: 1.4.4
 Authors@R: c(person("Figueiredo", "Renato", role = c("aut", "cre", "ths", "cph"),
                     email = "renato.figueiredo@oregonstate.edu",
                     comment = c(ORCID = "0000-0001-9841-6060")),
@@ -41,7 +41,7 @@ Suggests: arrow, glue, rmarkdown, paws.common, testthat, knitr,
 Encoding: UTF-8
 RoxygenNote: 7.3.2
 NeedsCompilation: no
-Packaged: 2024-12-19 00:43:11 UTC; rstudio
+Packaged: 2025-04-04 23:18:55 UTC; figueren
 Author: Figueiredo Renato [aut, cre, ths, cph]
     (<https://orcid.org/0000-0001-9841-6060>),
   Park Sungjae [aut] (<https://orcid.org/0009-0000-5357-804X>),
@@ -51,4 +51,4 @@ Author: Figueiredo Renato [aut, cre, ths, cph]
   Thomas R. Quinn [aut],
   Carey Cayelan [ctb]
 Repository: CRAN
-Date/Publication: 2024-12-19 08:30:11 UTC
+Date/Publication: 2025-04-04 23:30:02 UTC
