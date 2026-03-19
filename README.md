@@ -3,123 +3,124 @@
 
 # FaaSr <img src='man/figures/FaaSr.png' align="right" height="139" />
 
-<!-- badges: start -->
-
-[![R-CMD-check](https://github.com/spark0510/FaaSr-package/actions/workflows/R-CMD-check.yaml/badge.svg)](https://github.com/spark0510/FaaSr-package/actions/workflows/R-CMD-check.yaml)
-[![CRAN
-status](https://www.r-pkg.org/badges/version/FaaSr)](https://cran.r-project.org/package=FaaSr)
+[![R-CMD-check](https://github.com/FaaSr/FaaSr-package-v2/actions/workflows/R-CMD-check.yaml/badge.svg)](https://github.com/FaaSr/FaaSr-package-v2/actions/workflows/R-CMD-check.yaml)
+[![CRAN status](https://www.r-pkg.org/badges/version/FaaSr)](https://cran.r-project.org/package=FaaSr)
 [![DOI](https://joss.theoj.org/papers/10.21105/joss.07027/status.svg)](https://doi.org/10.21105/joss.07027)
 
-<!-- badges: end -->
+Start here to learn about FaaSr, especially if you used the
+previous version of the FaaSr package before.
 
-## Overview
+## Introduction
 
-The goal of [FaaSr](https://faasr.io) is to make it easy for developers to create R
-functions and workflows that can run in the cloud, on-demand, based on
-triggers - such as timers, or repository commits. It is built for
-Function-as-a-Service (FaaS) cloud computing, and supports both
-widely-used commercial (GitHub Actions, AWS Lambda, IBM Cloud) and
-open-source platforms (OpenWhisk). It is also built for cloud storage,
-and supports the S3 standard also widely used in commercial (AWS S3),
-open-source (Minio) and research platforms (Open Storage Network). With
-FaaSr, you can focus on developing the R functions, and leave dealing
-with the idiosyncrasies of different FaaS platforms and their APIs to
-the FaaSr package.
+FaaSr is a completely new local execution system. In this
+article we highlight the differences between the old and the new system.
 
-FaaSr allows you to: \* Develop one or more *functions* natively in R in
-your own GitHub repository \* Deploy *actions* that invoke your
-*functions* in Docker containers \* Compose *workflows* consisting of
-multiple *actions* in a pre-determined order, described by a Directed
-Acyclic Graph (*DAG*) \* Register your *workflows* for cloud-native
-execution in one of the supported FaaS providers \* Invoke your
-*workflows* with *events*, including scheduled timers \* Use S3-based
-*cloud storage* to provide file inputs and outputs to each *action* in
-the *workflow*
+There are two ways to use FaaSr. The recommended way for development and
+testing is to use `faasr_test()` from this package to run your FaaSr
+workflows locally on your own machine — no cloud credentials or accounts
+required.
 
-## Usage
+When you are ready to deploy to production, use
+[FaaSr-Backend](https://github.com/FaaSr/FaaSr-Backend), which handles
+execution across GitHub Actions, AWS Lambda, OpenWhisk, Google Cloud,
+and SLURM. For more information, visit <https://faasr.io>.
 
-The functions exposed by FaaSr can be broadly divided as follows: \*
-Server-side functions: are executed automatically in the cloud, by your
-functions/workflows. These deal with moving data from/to S3 storage and
-logging \* Client-side functions: are executed interactively by you, in
-your local desktop. These deal with registering and invoking your
-workflows for execution in your FaaS provider of choice
+## Transitioning from FaaSr v1
 
-### Server-side FaaSr functions
+### Requirements for using FaaSr
 
-- `faasr_get_file(server_name, remote_folder, remote_file, local_folder, local_file)`
-  downloads a file from an S3 server to be used by an *action*
-- `faasr_put_file(server_name, remote_folder, remote_file, local_folder, local_file)`
-  uploads a file from an *action* to an S3 server
-- `faasr_delete_file(server_name, remote_folder, remote_file)` deletes a
-  file from an S3 server
-- `faasr_arrow_s3_bucket(server_name)` returns an arrow object for use
-  with S3 server
-- `faasr_log(message)` adds a message to the log of the running action
+First, you need R (>= 3.5.0) installed on your machine.
 
-### Client-side FaaSr functions
+Second, you need a project directory containing your workflow JSON file
+and your R function scripts.
 
-- `workflow <- faasr(configuration_file, credentials_file)` returns a
-  *workflow* list associated with a workflow configuration file (in JSON
-  format) and file with credentials for S3 and FaaS server(s)
-- `workflow$register_workflow()` registers a *workflow* with the
-  configured FaaS provider
-- `workflow$invoke_workflow()` immediately invokes a *workflow* with the
-  configured FaaS provider
-- `workflow$set_workflow_timer(cron_string)` set a timer (using the
-  standard CRON format) to invoke a *workflow* at a given time interval
-  with the configured FaaS provider
-- `workflow$unset_workflow_timer()` unset a timer previously defined
-  with `set_workflow_timer()`
-
-### Workflow configuration
-
-Workflows are configured using the JSON file format and the [FaaSr
-configuration
-schema](https://github.com/FaaSr/FaaSr-package/blob/main/schema/FaaSr.schema.json).
-
-You may use the [FaaSr-JSON-Builder Shiny
-app](https://faasr.shinyapps.io/faasr-json-builder/) to create and edit
-workflows using a graphical user interface (GUI) rather than a text
-editor. This GUI can be used to create FaaSr-compliant JSON files from
-scratch (or starting from an exiting configuration you can upload using
-the tool). The generated configuration can be downloaded to your
-computer.
-
-### Cloud credential configuration
-
-The client-side FaaSr functions expect both a JSON configuration file
-describing a workflow, and an environment variable file storing the
-credentials for your FaaS cloud platforms of choice. The example below
-shows a template for S3 cloud storage, GitHub Actions, OpenWhisk and AWS
-Lambda credentials:
-
-`"My_GitHub_Account_TOKEN"="REPLACE_WITH_YOUR_GITHUB_TOKEN"`
-`"My_Minio_Bucket_ACCESS_KEY"="REPLACE_WITH_S3_ACCESS_KEY"`
-`"My_Minio_Bucket_SECRET_KEY"="REPLACE_WITH_S3_SECRET_KEY"`
-`"My_OW_Account_API_KEY"="REPLACE_WITH_YOUR_OPENWHISK_ID:SECRET_KEY"`
-`"My_Lambda_Account_ACCESS_KEY"="REPLACE_WITH_YOUR_AWS_LAMBDA_ACCESS_KEY"`
-`"My_Lambda_Account_SECRET_KEY"="REPLACE_WITH_YOUR_AWS_LAMBDA_SECRET_KEY"`
-
-## Installation
-
-FaaSr can be installed from CRAN with:
+Third, install FaaSr:
 
 ``` r
-install.packages("FaaSr")
+# install.packages("devtools")
+devtools::install_github("FaaSr/FaaSr-package-v2")
 ```
 
-You can install the development version of FaaSr from
-[GitHub](https://github.com/) with:
+Call `faasr_test("path/to/workflow.json")` from your project directory
+to run your workflow locally. FaaSr automatically creates a
+`faasr_data/` directory to simulate cloud infrastructure.
+
+### Differences from FaaSr v1
+
+The production execution backend — cloud deployment, S3 operations, and
+FaaS platform triggers — has moved to
+[FaaSr-Backend](https://github.com/FaaSr/FaaSr-Backend). This package
+now focuses exclusively on local testing.
+
+- The JSON schema is always fetched fresh from FaaSr-Backend at
+  runtime, so your local workflows are validated against the latest
+  specification.
+- You do not need cloud credentials or S3 buckets for local testing.
+  File operations are simulated on your local filesystem under
+  `faasr_data/files/`.
+- Logs are written to `faasr_data/logs/` instead of a remote S3
+  bucket.
+- The cloud-invocation functions from v1 are not part of this package —
+  use FaaSr-Backend for production deployments.
+- More workflow features are now validated locally: conditional
+  branching (True/False paths), parallel rank execution, cycle
+  detection, and predecessor consistency.
+
+## Local Testing
+
+### Project Structure
+
+FaaSr creates a `faasr_data/` directory automatically to
+simulate cloud infrastructure:
 
 ``` r
-devtools::install_github("FaaSr/FaaSr-package")
+library(FaaSr)
+
+# Directory structure (created automatically by faasr_test()):
+# your-project/
+# ├── workflow.json              # Your FaaSr workflow configuration
+# ├── faasr_data/                # Created automatically
+# │   ├── functions/             # (Optional) User R functions
+# │   ├── files/                 # Simulated S3 storage
+# │   ├── logs/                  # Log files
+# │   └── temp/                  # Temporary execution files
+# └── my_functions.R             # (Optional) Your R functions
 ```
 
-## Example
+### Running a Workflow
 
-Please refer to the [FaaSr
-tutorial](https://github.com/FaaSr/FaaSr-tutorial) for a detailed
-step-by-step example that you can run on your own desktop (using Rocker)
-or on Posit Cloud, using just a GitHub account and the free-for-testing
-Minio S3 Play server
+Set your working directory to your project and call:
+
+``` r
+faasr_test("path/to/workflow.json")
+```
+
+Your workflow runs locally with full support for:
+
+- Conditional branching (True/False paths)
+- Parallel rank execution
+- File operations (simulated S3 via local filesystem)
+- Logging and monitoring
+
+### Limitations of Local Testing
+
+Local testing with `faasr_test()` does not connect to any cloud
+infrastructure — all storage operations use the local filesystem. This
+means:
+
+- Results are not persisted to S3 or any remote storage between runs.
+- No actual FaaS platform (Lambda, OpenWhisk, etc.) is invoked;
+  functions run sequentially in the same R session.
+- Network-dependent features such as remote triggers and cloud
+  notifications are not exercised.
+
+To deploy against real cloud infrastructure, use
+[FaaSr-Backend](https://github.com/FaaSr/FaaSr-Backend).
+
+## Production Deployment
+
+Once your workflow is validated locally, deploy it to the cloud using
+[FaaSr-Backend](https://github.com/FaaSr/FaaSr-Backend), which supports
+GitHub Actions, AWS Lambda, OpenWhisk, Google Cloud, and SLURM.
+
+For more information, visit <https://faasr.io>.

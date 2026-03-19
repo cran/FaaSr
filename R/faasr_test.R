@@ -1,514 +1,797 @@
-docker_default_version <- "latest"
-docker_default_image <- "faasr/local-test"
-
 #' @name faasr_test
-#' @title faasr_test
-#' @description 
-#' Client tools for local tests
-#' Users can use local test by using both for Docker and local file system
-#' @param use_docker a list of docker configuration - use, version and image.
-#' @import cli
-#' @return return nothing / executes the FaaS
-#' @export 
-#' @examples
-#' if (interactive()){
-#' test <- faasr("test.json", "env")
-#' test$faasr_test()
-#' test$faasr_test(use_docker=list(use=TRUE, version="test", image="docker.io/test/test-docker:image"))
-#' }
+#' @title FaaSr test execution
+#' @description
+#' Workflow execution that dynamically handles conditional branching
+#' and predecessor dependencies without precomputation.
+#' @param json_path path to workflow JSON
+#' @return TRUE if all functions run successfully; stops on error
+#' @importFrom jsonlite fromJSON toJSON
+#' @importFrom cli cli_h2 cli_alert_success cli_alert_danger
+#' @export
+faasr_test <- function(json_path) {
+  if (!file.exists(json_path)) stop(sprintf("Workflow JSON not found: %s", json_path))
 
-faasr_test <- function(use_docker=
-                        list(
-                          use=FALSE, 
-                          version=docker_default_version, 
-                          image=docker_default_image
-                        )
-                      ){
-  # Get configurations
-  svc <- .faasr_get_svc()
-  faasr_wd <- svc$wd
-  if (!dir.exists(faasr_wd)){
-    faasr_wd <- getwd()
-  }
-  faasr <- svc$json
-  cred <- faasr_collect_sys_env(faasr,svc$cred)
-  faasr <- faasr_replace_values(faasr, cred)
-  docker_image <- paste0(use_docker$image, ":", use_docker$version)
-
-  # if no "faasr_data" directory created by 'faasr' function, no execution
-  if (!dir.exists("faasr_data")){
-    cli_alert_danger("faasr_data directory no found")
-    return("")
-  }
-  on.exit(setwd(faasr_wd))
-  setwd("faasr_data")
-  faasr_data_wd <- getwd()
-
-  # if there's "temp" folder, remove it, and create new "temp" folder.
-  if (dir.exists("temp")){
-    unlink("temp", recursive=TRUE)
-  }
-  dir.create("temp/faasr_state_info", recursive=TRUE)
-  cli_alert_success("Create test temporary folders")
-
-  # Download schema from github
-  utils::download.file("https://raw.githubusercontent.com/FaaSr/FaaSr-package/main/schema/FaaSr.schema.json", "temp/FaaSr.schema.json")
-  
-  # start the test by calling 'faasr_test_start'
-  on.exit(setwd(faasr_wd))
-  setwd("temp")
-  result <- faasr_test_start(faasr, faasr_data_wd, use_docker$use, docker_image)
-
-  # if result==TRUE, it is successful. Else, failed with "result" data.
-  if (isTRUE(result)) {
-    on.exit(setwd(faasr_wd))
-    setwd(faasr_wd)
-    cli_alert_success("Function execution successfully")
-  } else {
-    on.exit(setwd(faasr_wd))
-    setwd(faasr_wd)
-    cli_alert_danger(result)
-    cli_alert_info("Wrong result: test close")
-  }
-}
-.faasr_user$operations$faasr_test <- faasr_test
-
-
-faasr_test_start <- function(faasr, faasr_data_wd, docker_use, docker_image){
-  # function for clearing the console
-  clc <- function() cat(rep("\n", 30))
-
-  # get configuration
-  current_func <- faasr$FunctionInvoke
-  cli::cli_h1("")
-  faasr_input <- jsonlite::toJSON(faasr, auto_unbox=TRUE)
-
-  # run the test - configuration/user_function tests
-  # if docker_use == TRUE, run the docker image / if docker_use !=TRUE, run the local function.
-  if (docker_use){
-    result <- system(paste0("docker run --rm --name faasr-",current_func,
-                    " --mount type=bind,source='",faasr_data_wd,"',target='/faasr_data' ",
-                    docker_image," '", faasr_input,"'"), 
-                    intern=TRUE, ignore.stderr = FALSE, ignore.stdout= FALSE)
-  } else {
-    result <- faasr_test_run(faasr)
+  # Parse JSON
+  wf <- try(jsonlite::fromJSON(json_path, simplifyVector = FALSE), silent = TRUE)
+  if (inherits(wf, "try-error")) {
+    stop(sprintf("JSON parsing error in %s: %s", json_path, as.character(wf)))
   }
 
-  # if result != TRUE, it means there's an error. return error message.
-  if (result[length(result)] != TRUE && result[length(result)] != "TRUE" ){
-    return(result[length(result)])
-  }
+  # Validate required fields
+  if (is.null(wf$ActionList)) stop("Invalid workflow JSON: missing required field 'ActionList'")
+  if (is.null(wf$FunctionInvoke)) stop("Invalid workflow JSON: missing required field 'FunctionInvoke'")
 
-  # if there's no next function, return TRUE.
-  next_funcs <- faasr$FunctionList[[faasr$FunctionInvoke]]$InvokeNext
-  if (is.null(next_funcs)){
-    return(TRUE)
-  }
-
-  cli_alert_info(paste0("Testing successful - ",current_func))
-
-  # recursively run the code by calling another "faasr_test_start"
-  for (next_func in next_funcs){
-    faasr$FunctionInvoke <- next_func
-    faasr_wd <- getwd()
-    on.exit(setwd(faasr_wd))
-    cli_alert_info("Trigger Next functions")
-    result <- faasr_test_start(faasr, faasr_data_wd, docker_use, docker_image)
-    if (result[length(result)] != TRUE){
-      return(result[length(result)])
-    }
-  }
-  return(TRUE)
-}
-
-# faasr_test_run - running the same procedure of FaaSr
-faasr_test_run <- function(faasr, docker_use=FALSE){
-
-  # Read the R scripts, which are given by users
-  if (docker_use){
-    for (i in list.files("/faasr_data/R")){
-      source(paste0("/faasr_data/R/",i))
-    }
-  } else {
-    for (i in list.files("../R")){
-      source(paste0("../R/",i))
-    }
+  # Find package root (works from source tree or test directory)
+  pkg_root <- getwd()
+  # If running from tests/testthat, go up two levels
+  if (basename(dirname(pkg_root)) == "tests" && basename(pkg_root) == "testthat") {
+    pkg_root <- dirname(dirname(pkg_root))
   }
   
-  cli_alert_success("Read R files")
-
-  current_func <- faasr$FunctionInvoke
-  func_name <- faasr$FunctionList[[faasr$FunctionInvoke]]$FunctionName
-
-  # create the 'FunctionInvoke' directory.
-  cli::cli_h2(paste0("Start testing: ",current_func))
-  if (!dir.exists(current_func)){
-    dir.create(current_func)
-  }
-  faasr_wd <- getwd()
-  on.exit(setwd(faasr_wd))
-  setwd(current_func)
-
-  # Start configuration check - this is same procedure to 'faasr_start'
-  result <- faasr_configuration_check(faasr, docker_use)
-  if (result != TRUE){
-    if (result == "next"){
-      return(TRUE)
-    } else{
-      cli_alert_danger(result)
-      return("")
+  # Source user function
+  src_dirs <- c(
+    system.file("extdata", "functions", package = "FaaSr", mustWork = FALSE), #for testthat
+    file.path(pkg_root, "inst", "extdata", "functions"), #for testthat
+    file.path(pkg_root, "R"),
+    file.path(getwd(), "faasr_data", "functions")
+  )
+  # Remove empty paths and non-existent dirs
+  src_dirs <- src_dirs[nzchar(src_dirs) & dir.exists(src_dirs)]
+  for (d in src_dirs) {
+    rfiles <- list.files(d, pattern = "\\.R$", full.names = TRUE)
+    for (f in rfiles) {
+      try(source(f, local = .GlobalEnv), silent = FALSE)
     }
   }
-  cli_alert_success("Configuration checked")
 
-  # Download and install dependencies
-  check <- faasr_dependency_install(faasr, func_name)
-  if (check != TRUE){
-    cli_alert_danger(check)
-    return("")
-  }
-  cli_alert_success("Dependencies installed")
+  # Setup directories
+  faasr_data_wd <- file.path(getwd(), "faasr_data")
+  if (!dir.exists(faasr_data_wd)) dir.create(faasr_data_wd, recursive = TRUE)
+  temp_dir <- file.path(faasr_data_wd, "temp")
+  if (dir.exists(temp_dir)) unlink(temp_dir, recursive = TRUE)
+  state_dir <- file.path(temp_dir, "faasr_state_info")
+  files_dir <- file.path(faasr_data_wd, "files")
+  if (!dir.exists(temp_dir)) dir.create(temp_dir, recursive = TRUE)
+  if (!dir.exists(state_dir)) dir.create(state_dir, recursive = TRUE)
+  if (!dir.exists(files_dir)) dir.create(files_dir, recursive = TRUE)
 
-  # Run the user function. 
-  # If it is successful, it returns TRUE, if not, it returns "" and prints the error message.
-  result <- faasr_user_function_check(faasr, docker_use)
-  if (result != TRUE){
-    cli_alert_danger(result)
-    return("")
-  }
-  cli_alert_success("User function checked")
-  return(TRUE)
-}
-
-# faasr_user_function_check - check the user function.
-faasr_user_function_check <- function(faasr, docker_use=FALSE){
-
-  # get the user function
-  faasr_wd <- getwd()
-  func_name <- faasr$FunctionList[[faasr$FunctionInvoke]]$FunctionName
-  user_function <- try(get(func_name), silent=TRUE)
-
-  # if 'try' function creates the error, return the error.
-  if (methods::is(user_function, "try-error")){
-    return(paste0("Can't find User function ",func_name))
-  }
-
-  # change the user function with local test - local tests don't use FaaS or S3 storage
-  # Parse the user function and check the FaaSr functions.
-  # Replace them with other local test functions.
-  user_call <- trimws(deparse(user_function))
-  if (docker_use){
-    for (i in 1:length(user_call)){
-      user_call[i] <- gsub("FaaSr::faasr_put_file", "faasr_docker_local_test_put_file", user_call[i])
-      user_call[i] <- gsub("faasr_put_file", "faasr_docker_local_test_put_file", user_call[i])
-
-      user_call[i] <- gsub("FaaSr::faasr_get_file", "faasr_docker_local_test_get_file", user_call[i])
-      user_call[i] <- gsub("faasr_get_file", "faasr_docker_local_test_get_file", user_call[i])
-
-      user_call[i] <- gsub("FaaSr::faasr_delete_file", "faasr_docker_local_test_delete_file", user_call[i])
-      user_call[i] <- gsub("faasr_delete_file", "faasr_docker_local_test_delete_file", user_call[i])
-
-      user_call[i] <- gsub("FaaSr::faasr_log", "faasr_docker_local_test_log", user_call[i])
-      user_call[i] <- gsub("faasr_log", "faasr_docker_local_test_log", user_call[i])   
-
-      user_call[i] <- gsub("FaaSr::faasr_arrow_s3_bucket", "faasr_docker_local_test_arrow_s3_bucket", user_call[i])
-      user_call[i] <- gsub("faasr_arrow_s3_bucket", "faasr_docker_local_test_arrow_s3_bucket", user_call[i])   
-    }
+  # Generate and write invocation ID
+  # Ensure InvocationID from JSON is used if present
+  if (!is.null(wf[["InvocationID"]]) && nzchar(trimws(wf[["InvocationID"]]))) {
+    invocation_id <- trimws(wf[["InvocationID"]])
   } else {
-    for (i in 1:length(user_call)){
-      user_call[i] <- gsub("FaaSr::faasr_put_file", "faasr_local_test_put_file", user_call[i])
-      user_call[i] <- gsub("faasr_put_file", "faasr_local_test_put_file", user_call[i])
-
-      user_call[i] <- gsub("FaaSr::faasr_get_file", "faasr_local_test_get_file", user_call[i])
-      user_call[i] <- gsub("faasr_get_file", "faasr_local_test_get_file", user_call[i])
-
-      user_call[i] <- gsub("FaaSr::faasr_delete_file", "faasr_local_test_delete_file", user_call[i])
-      user_call[i] <- gsub("faasr_delete_file", "faasr_local_test_delete_file", user_call[i])
-
-      user_call[i] <- gsub("FaaSr::faasr_log", "faasr_local_test_log", user_call[i])
-      user_call[i] <- gsub("faasr_log", "faasr_local_test_log", user_call[i])
-
-      user_call[i] <- gsub("FaaSr::faasr_arrow_s3_bucket", "faasr_local_test_arrow_s3_bucket", user_call[i])
-      user_call[i] <- gsub("faasr_arrow_s3_bucket", "faasr_local_test_arrow_s3_bucket", user_call[i])         
-    }   
+    invocation_id <- .faasr_generate_invocation_id(wf)
   }
-  user_function <- eval(parse(text=user_call))
+  .faasr_write_invocation_id(invocation_id, state_dir)
 
-  user_args <- faasr_get_user_function_args(faasr) 
+  # Clean files outputs
+  files_to_remove <- try(list.files(files_dir, all.files = TRUE, full.names = TRUE,
+                                    include.dirs = TRUE, recursive = FALSE), silent = TRUE)
+  if (!inherits(files_to_remove, "try-error") && length(files_to_remove)) {
+    base_names <- basename(files_to_remove)
+    keep <- base_names %in% c(".", "..", ".gitkeep")
+    to_delete <- files_to_remove[!keep]
+    if (length(to_delete)) unlink(to_delete, recursive = TRUE, force = TRUE)
+  }
 
-  # Execute the user function.
-  faasr_result <- tryCatch({expr=do.call(user_function, user_args)}, error=function(e){e})
-  on.exit(setwd(faasr_wd))
-  setwd(faasr_wd)
+  # Download the latest schema from FaaSr-Backend into the session temp directory
+  schema_url <- "https://raw.githubusercontent.com/FaaSr/FaaSr-Backend/main/FaaSr_py/FaaSr.schema.json"
+  schema_repo_path <- file.path(tempdir(), "FaaSr_schema.json")
+  dl_result <- try(utils::download.file(schema_url, schema_repo_path, quiet = TRUE), silent = TRUE)
+  if (inherits(dl_result, "try-error") || !file.exists(schema_repo_path)) {
+    # Fall back to local copies if download fails
+    schema_repo_path <- system.file("schema.json", package = "FaaSr", mustWork = FALSE)
+    if (!nzchar(schema_repo_path) || !file.exists(schema_repo_path)) {
+      schema_repo_path <- file.path(getwd(), "schema.json")
+    }
+  }
+
+  # Validate workflow configuration (schema validation + cycle detection)
+  # Use simplified validation without predecessor consistency check
+  cfg_check <- .faasr_configuration_check_simple(wf, state_dir)
+  if (!identical(cfg_check, TRUE)) {
+    stop(cfg_check)
+  }
+
+  # Build reverse dependency map: which functions does each function depend on?
+  reverse_deps <- .faasr_build_reverse_deps(wf$ActionList)
+
+  # Track completed functions (as sets of action_name + rank)
+  completed <- character()
+
+  # Track which actions have been enqueued (added to execution plan)
+  # This helps us distinguish between "not yet executed" vs "never will execute"
+  enqueued_actions <- character()
+
+  # Dual-queue execution: ready_queue for functions to check, waiting_queue for blocked functions
+  ready_queue <- list(list(action_name = wf$FunctionInvoke, rank_current = 1, rank_max = 1))
+  waiting_queue <- list()
+  enqueued_actions <- c(enqueued_actions, wf$FunctionInvoke)
+
+  # Main execution loop (dual-queue BFS)
+  while (length(ready_queue) > 0 || length(waiting_queue) > 0) {
     
-  # If there's error, return the message
-  if (methods::is(faasr_result, "error")){
-    check <- FALSE
-    err_code <- deparse(faasr_result$call)
+    # Deadlock detection: ready queue empty but waiting queue has items
+    if (length(ready_queue) == 0 && length(waiting_queue) > 0) {
+      waiting_names <- sapply(waiting_queue, function(x) x$action_name)
+      stop(sprintf("Deadlock detected: %d functions waiting but none can execute: %s",
+                   length(waiting_queue), paste(unique(waiting_names), collapse = ", ")))
+    }
 
-    for (i in 1:length(user_call)){
-      if (err_code[1] == user_call[i]){
-        check <- TRUE
-        return(paste0("Line", i-1, " : ", faasr_result$message))
+    # Process ready queue
+    if (length(ready_queue) > 0) {
+      # Dequeue next item from ready queue
+      item <- ready_queue[[1]]
+      ready_queue <- ready_queue[-1]
+
+      action_name <- item$action_name
+      rank_current <- item$rank_current
+      rank_max <- item$rank_max
+
+      # Create unique key for this execution
+      exec_key <- paste0(action_name, "_rank_", rank_current, "/", rank_max)
+
+      # Skip if already executed
+      if (exec_key %in% completed) next
+
+      # Get action definition
+      action <- wf$ActionList[[action_name]]
+      if (is.null(action)) next
+
+      # Check if all required predecessors have completed
+      # Only wait for predecessors that have been enqueued
+      ready <- .faasr_check_ready_simple(action_name, reverse_deps, completed, enqueued_actions)
+      
+      if (!ready) {
+        # Not ready yet - move to waiting queue (not back to ready queue)
+        waiting_queue <- c(waiting_queue, list(item))
+        next
       }
-    }   
-    if (!check){
-      return(faasr_result$message)
-    }
-  } else {
-    if (docker_use){
-      write.table("TRUE", file=paste0("/faasr_data/temp/faasr_state_info/", faasr$FunctionInvoke, ".done"), row.names=F, col.names=F)
-    } else {
-      write.table("TRUE", file=paste0("../faasr_state_info/", faasr$FunctionInvoke, ".done"), row.names=F, col.names=F)
-    }
-    return(TRUE)
-  }
-}
 
-# check the configuration check - this is same procedure to 'faasr_start'
-faasr_configuration_check <- function(faasr, docker_use=FALSE){
-  
-  # copy the schema
-  if (docker_use){
-    file.copy(from="/faasr_data/temp/FaaSr.schema.json", to="FaaSr.schema.json")
-  } else {
-    file.copy(from="../FaaSr.schema.json", to="FaaSr.schema.json")
-  }
-  
-  # check the schema
-  faasr <- try(faasr_parse(toJSON(faasr,auto_unbox=TRUE)), silent=TRUE)
-  if (methods::is(faasr, "try-error")){
-    # schema errors
-    return("JSON parsing error")
-  } 
+      # Execute the function
+      func_name <- action$FunctionName
+      args <- action$Arguments %||% list()
 
-  # check the data storage configuration
-  for (datastore in names(faasr$DataStores)){
-    endpoint <- faasr$DataStores[[datastore]]$Endpoint
-    if ((!is.null(endpoint)) && (endpoint != "") && !startsWith(endpoint, "https")){
-      # data store errors
-      return("data store errors")
-    }
-  }
-
-  log_server_name <- faasr$DefaultDataStore
-  if (!log_server_name %in% names(faasr$DataStores)){
-    # default server errors
-    return("default server errors")
-  }
-
-  if (!is.null(faasr$LoggingDataStore)){
-    log_server_name <- faasr$LoggingDataStore
-    if (!log_server_name %in% names(faasr$DataStores)){
-      # logging server errors
-      return("logging server errors")
-    }
-  }
-
-  # check the workflow cycle.
-  pre <- try(faasr_check_workflow_cycle(faasr), silent=TRUE)
-  if (methods::is(pre, "try-error")){
-    # cycle/unreachable faasr_state_info errors
-    return("cycle/unreachable faasr_state_info errors")
-  }
-  
-  # if the number of predecessor nodes is more than 2, skip running.
-  if (length(pre)>1){
-    for (func in pre) {
-      func_done <- paste0(func,".done")
-      if (docker_use){
-        check_fn_done_list <- list.files("/faasr_data/temp/faasr_state_info")
+      # Set rank info
+      if (rank_max > 1) {
+        rank_info <- paste0(rank_current, "/", rank_max)
+        .faasr_write_rank_info(rank_info, state_dir)
+        cli::cli_h2(sprintf("Running %s (%s) - Rank %s", action_name, func_name, rank_info))
       } else {
-        check_fn_done_list <- list.files("../faasr_state_info")
+        .faasr_write_rank_info(NULL, state_dir)
+        cli::cli_h2(sprintf("Running %s (%s)", action_name, func_name))
       }
-      if (!func_done %in% check_fn_done_list){
-        return("next")
+
+      # Check function exists
+      if (!exists(func_name, mode = "function", envir = .GlobalEnv)) {
+        stop(sprintf("Function not found in environment: %s (action %s)", func_name, action_name))
+      }
+
+      # Create isolated run directory without changing global working directory
+      run_dir <- file.path(temp_dir, action_name)
+      if (!dir.exists(run_dir)) dir.create(run_dir, recursive = TRUE)
+      Sys.setenv(FAASR_DATA_ROOT = faasr_data_wd)
+      Sys.setenv(FAASR_RUN_DIR = run_dir)
+
+      # Execute function
+      f <- get(func_name, envir = .GlobalEnv)
+      res <- try(do.call(f, args), silent = TRUE)
+      if (inherits(res, "try-error")) {
+        Sys.unsetenv("FAASR_RUN_DIR")
+        cli::cli_alert_danger(as.character(res))
+        stop(sprintf("Error executing %s", func_name))
+      }
+      Sys.unsetenv("FAASR_RUN_DIR")
+      
+      # Mark this execution as complete
+      completed <- c(completed, exec_key)
+
+      # Mark action as done (only after final rank)
+      if (rank_current == rank_max) {
+        utils::write.table("TRUE", file = file.path(state_dir, paste0(action_name, ".done")),
+                          row.names = FALSE, col.names = FALSE)
+
+        # Enqueue successors based on InvokeNext
+        nexts <- action$InvokeNext %||% list()
+        if (is.character(nexts)) nexts <- as.list(nexts)
+
+        for (nx in nexts) {
+          if (is.character(nx)) {
+            # Simple successor: "funcB" or "funcB(3)"
+            parsed <- .faasr_parse_invoke_next_string(nx)
+            # Mark as enqueued (only track action name, not ranks)
+            if (!(parsed$func_name %in% enqueued_actions)) {
+              enqueued_actions <- c(enqueued_actions, parsed$func_name)
+            }
+            for (r in 1:parsed$rank) {
+              ready_queue <- c(ready_queue, list(list(
+                action_name = parsed$func_name,
+                rank_current = r,
+                rank_max = parsed$rank
+              )))
+            }
+          } else if (is.list(nx)) {
+            # Conditional: {True: [...], False: [...]}
+            # Only follow the branch that matches the result
+            branch <- NULL
+            if (isTRUE(res) && !is.null(nx$True)) {
+              branch <- nx$True
+            } else if (identical(res, FALSE) && !is.null(nx$False)) {
+              branch <- nx$False
+            }
+
+            if (!is.null(branch)) {
+              for (b in branch) {
+                parsed <- .faasr_parse_invoke_next_string(b)
+                # Mark as enqueued
+                if (!(parsed$func_name %in% enqueued_actions)) {
+                  enqueued_actions <- c(enqueued_actions, parsed$func_name)
+                }
+                for (r in 1:parsed$rank) {
+                  ready_queue <- c(ready_queue, list(list(
+                    action_name = parsed$func_name,
+                    rank_current = r,
+                    rank_max = parsed$rank
+                  )))
+                }
+              }
+            }
+          }
+        }
+      }
+
+      # Scan and promote: check waiting queue for functions that are now ready
+      if (length(waiting_queue) > 0) {
+        still_waiting <- list()
+        for (waiting_item in waiting_queue) {
+          waiting_ready <- .faasr_check_ready_simple(
+            waiting_item$action_name, reverse_deps, completed, enqueued_actions
+          )
+          if (waiting_ready) {
+            # Promote to ready queue
+            ready_queue <- c(ready_queue, list(waiting_item))
+          } else {
+            # Keep in waiting queue
+            still_waiting <- c(still_waiting, list(waiting_item))
+          }
+        }
+        waiting_queue <- still_waiting
       }
     }
   }
 
-  return(TRUE)
+  # Cleanup
+  rank_file <- file.path(state_dir, "current_rank_info.txt")
+  inv_file <- file.path(state_dir, "current_invocation_id.txt")
+  if (file.exists(rank_file)) unlink(rank_file)
+  if (file.exists(inv_file)) unlink(inv_file)
+
+  cli::cli_alert_success("Workflow completed")
+  TRUE
 }
 
+# ============================================================================
+# Helper Functions
+# ============================================================================
 
-# local test function for faasr_put_file
-faasr_local_test_put_file <- function(server_name=NULL, remote_folder="", remote_file, local_folder=".", local_file){
-   
-  remote_folder <- sub("^/+", "", sub("/+$", "", remote_folder))
-  remote_file <- sub("^/+", "", sub("/+$", "", remote_file))
-  remote_folder <- paste0("../../files/", remote_folder)
-  put_file_s3 <- paste0(remote_folder, "/", remote_file)
+#' Default value operator
+#'
+#' Internal operator that returns the second argument if the first is NULL.
+#'
+#' @param x First argument to check
+#' @param y Default value to return if x is NULL
+#' @return x if not NULL, otherwise y
+#' @keywords internal
+#' @noRd
+`%||%` <- function(x, y) if (is.null(x)) y else x
 
-  local_folder <- sub("^/+", "", sub("/+$", "", local_folder))
-  local_file <- sub("^/+", "", sub("/+$", "", local_file))
-  local_folder <- paste0("./", local_folder)
-  put_file <- paste0(local_folder,"/",local_file)
-  
-  if (!dir.exists(local_folder)){
-    dir.create(local_folder, recursive=TRUE)
+#' @name .faasr_write_rank_info
+#' @title Write rank information to temporary file
+#' @description
+#' Internal function to write rank information to a temporary file for the current execution context.
+#' @param rank_info Character string rank information in format "current/max" or NULL
+#' @param state_dir Character string path to the state directory
+#' @return Invisibly returns TRUE on success
+#' @keywords internal
+.faasr_write_rank_info <- function(rank_info, state_dir) {
+  rank_file <- file.path(state_dir, "current_rank_info.txt")
+  if (is.null(rank_info)) {
+    if (file.exists(rank_file)) unlink(rank_file)
+  } else {
+    writeLines(rank_info, rank_file)
+  }
+  invisible(TRUE)
+}
+
+#' @name .faasr_write_invocation_id
+#' @title Write invocation ID to temporary file
+#' @description
+#' Internal function to write invocation ID to a temporary file for the current execution context.
+#' @param invocation_id Character string invocation ID
+#' @param state_dir Character string path to the state directory
+#' @return Invisibly returns TRUE on success
+#' @keywords internal
+.faasr_write_invocation_id <- function(invocation_id, state_dir) {
+  inv_file <- file.path(state_dir, "current_invocation_id.txt")
+  writeLines(invocation_id, inv_file)
+  invisible(TRUE)
+}
+
+#' @name .faasr_generate_invocation_id
+#' @title Generate invocation ID based on workflow configuration
+#' @description
+#' Internal function to generate a unique invocation ID for the workflow execution.
+#' Priority: 1) Use InvocationID if provided, 2) Use InvocationIDFromDate if valid, 3) Generate UUID
+#' @param wf List containing the parsed workflow configuration
+#' @return Character string invocation ID
+#' @keywords internal
+.faasr_generate_invocation_id <- function(wf) {
+  # Priority 1: Check if InvocationID is already set in the workflow
+  inv_id <- wf[["InvocationID"]]
+  if (!is.null(inv_id) && nzchar(trimws(inv_id))) {
+    return(trimws(inv_id))
   }
 
-  if (!dir.exists(remote_folder)){
-    dir.create(remote_folder, recursive=TRUE)
-  }  
+  # Priority 2: Check if InvocationIDFromDate format is specified and valid
+  if (!is.null(wf[["InvocationIDFromDate"]]) && nzchar(trimws(wf[["InvocationIDFromDate"]]))) {
+    date_format <- trimws(wf[["InvocationIDFromDate"]])
+    # Validate the date format by checking if it contains valid format specifiers
+    # Valid format specifiers are % followed by letters (Y, m, d, H, M, S, etc.)
+    if (!grepl("^[%a-zA-Z0-9\\s:._-]+$", date_format) || !grepl("%[a-zA-Z]", date_format)) {
+      stop(sprintf("Invalid InvocationIDFromDate format '%s': must contain valid date format specifiers (e.g., %%Y%%m%%d)", date_format))
+    }
 
-  file.copy(from=put_file, to=put_file_s3)
-
-}
-
-# local test function for faasr_get_file
-faasr_local_test_get_file <- function(server_name=NULL, remote_folder="", remote_file, local_folder=".", local_file){
-  
-  remote_folder <- sub("^/+", "", sub("/+$", "", remote_folder))
-  remote_file <- sub("^/+", "", sub("/+$", "", remote_file))
-  remote_folder <- paste0("../../files/", remote_folder)
-  get_file_s3 <- paste0(remote_folder, "/", remote_file)
-
-  local_folder <- sub("^/+", "", sub("/+$", "", local_folder))
-  local_file <- sub("^/+", "", sub("/+$", "", local_file))
-  local_folder <- paste0("./", local_folder)
-  get_file <- paste0(local_folder,"/",local_file)
-  
-  if (!dir.exists(local_folder)){
-    dir.create(local_folder, recursive=TRUE)
+    # Try to use the format and validate the result
+    test_result <- format(Sys.time(), date_format)
+    return(test_result)
+  }
+  else {
+    return(uuid::UUIDgenerate())
   }
 
-  if (!dir.exists(remote_folder)){
-    dir.create(remote_folder, recursive=TRUE)
-  }  
-
-  file.copy(to=get_file, from=get_file_s3)
-
-}
-
-# local test function for faasr_delete_file
-faasr_local_test_delete_file <- function(server_name=NULL, remote_folder="", remote_file){
   
-  remote_folder <- sub("^/+", "", sub("/+$", "", remote_folder))
-  remote_file <- sub("^/+", "", sub("/+$", "", remote_file))
-  remote_folder <- paste0("../../files/", remote_folder)
-  delete_file_s3 <- paste0(remote_folder, "/", remote_file)
-
-  unlink(delete_file_s3, recursive=TRUE)
-
 }
 
-# local test function for faasr_log
-faasr_local_test_log <- function(log_message){
-  # TBD
-}
+#' @name .faasr_parse_invoke_next_string
+#' @title Parse InvokeNext string to extract function name and rank
+#' @description
+#' Internal function to parse InvokeNext strings that may contain rank notation.
+#' Supports formats like "FunctionName" and "FunctionName(3)" for parallel execution.
+#' @param invoke_string Character string to parse
+#' @return List containing func_name, condition, and rank
+#' @keywords internal
+.faasr_parse_invoke_next_string <- function(invoke_string) {
+  s <- trimws(invoke_string)
 
-# local test function for faasr_log
-faasr_local_test_arrow_s3_bucket <- function(server_name=NULL, faasr_prefix=""){
-  s3 <- arrow::SubTreeFileSystem$create("../../files")
-  return(s3)
-}
-
-# local(docker) test function for faasr_put_file
-faasr_docker_local_test_put_file <- function(server_name=NULL, remote_folder="", remote_file, local_folder=".", local_file){
-   
-  remote_folder <- sub("^/+", "", sub("/+$", "", remote_folder))
-  remote_file <- sub("^/+", "", sub("/+$", "", remote_file))
-  remote_folder <- paste0("/faasr_data/files/", remote_folder)
-  put_file_s3 <- paste0(remote_folder, "/", remote_file)
-
-  local_folder <- sub("^/+", "", sub("/+$", "", local_folder))
-  local_file <- sub("^/+", "", sub("/+$", "", local_file))
-  local_folder <- paste0("./", local_folder)
-  put_file <- paste0(local_folder,"/",local_file)
-  
-  if (!dir.exists(local_folder)){
-    dir.create(local_folder, recursive=TRUE)
+  # Reject any bracketed conditions or unsupported syntax
+  if (grepl("\\[|\\]", s)) {
+    stop("Invalid InvokeNext format: only 'FuncName' and 'FuncName(N)' are supported")
   }
 
-  if (!dir.exists(remote_folder)){
-    dir.create(remote_folder, recursive=TRUE)
-  }  
+  # Match optional (N) at the end; capture name and digits
+  m <- regexec("^(.*?)(?:\\((\\d+)\\))?$", s)
+  mm_all <- regmatches(s, m)
+  if (!length(mm_all) || length(mm_all[[1]]) != 3) {
+    stop("Invalid InvokeNext format")
+  }
+  mm <- mm_all[[1]]
 
-  file.copy(from=put_file, to=put_file_s3)
-
-}
-
-# local(docker) test function for faasr_get_file
-faasr_docker_local_test_get_file <- function(server_name=NULL, remote_folder="", remote_file, local_folder=".", local_file){
-  
-  remote_folder <- sub("^/+", "", sub("/+$", "", remote_folder))
-  remote_file <- sub("^/+", "", sub("/+$", "", remote_file))
-  remote_folder <- paste0("/faasr_data/files/", remote_folder)
-  get_file_s3 <- paste0(remote_folder, "/", remote_file)
-
-  local_folder <- sub("^/+", "", sub("/+$", "", local_folder))
-  local_file <- sub("^/+", "", sub("/+$", "", local_file))
-  local_folder <- paste0("./", local_folder)
-  get_file <- paste0(local_folder,"/",local_file)
-  
-  if (!dir.exists(local_folder)){
-    dir.create(local_folder, recursive=TRUE)
+  func_name <- trimws(mm[2])
+  if (!nzchar(func_name)) {
+    stop("Invalid InvokeNext: empty function name")
   }
 
-  if (!dir.exists(remote_folder)){
-    dir.create(remote_folder, recursive=TRUE)
-  }  
+  rank <- 1
+  if (nzchar(mm[3])) {
+    rank <- as.integer(mm[3])
+  }
 
-  file.copy(to=get_file, from=get_file_s3)
-
+  list(func_name = func_name, condition = NULL, rank = rank)
 }
 
-# local(docker) test function for faasr_delete_file
-faasr_docker_local_test_delete_file <- function(server_name=NULL, remote_folder="", remote_file){
+#' @name .faasr_build_adjacency
+#' @title Build adjacency list from ActionList
+#' @description
+#' Internal function to build an adjacency list representation of the workflow
+#' graph from the ActionList using InvokeNext references.
+#' @param action_list List containing the workflow action definitions
+#' @return List where each element contains the names of functions that can be invoked next
+#' @keywords internal
+.faasr_build_adjacency <- function(action_list) {
+  adj <- list()
+  for (nm in names(action_list)) {
+    nx <- action_list[[nm]]$InvokeNext %||% list()
+    next_names <- character()
+    if (is.character(nx)) {
+      next_names <- sub("\\(.*$", "", nx)
+    } else if (is.list(nx)) {
+      for (item in nx) {
+        if (is.character(item)) {
+          next_names <- c(next_names, sub("\\(.*$", "", item))
+        } else if (is.list(item)) {
+          if (!is.null(item$True)) next_names <- c(next_names, sub("\\(.*$", "", unlist(item$True)))
+          if (!is.null(item$False)) next_names <- c(next_names, sub("\\(.*$", "", unlist(item$False)))
+        }
+      }
+    }
+    if (length(next_names)) adj[[nm]] <- unique(next_names)
+  }
+  adj
+}
+
+#' @name .faasr_check_workflow_cycle_bfs
+#' @title Detect cycles in workflow graph using BFS
+#' @description
+#' Internal function to detect cycles in the workflow graph using BFS traversal.
+#' Uses a three-state tracking system (unvisited=0, in_progress=1, done=2) to detect back-edges.
+#' Workflows must be acyclic (DAG) to be valid.
+#' @param faasr List containing the parsed workflow configuration
+#' @param start_node Character string name of the starting function
+#' @return TRUE if no cycles detected, stops with error if cycle found
+#' @keywords internal
+.faasr_check_workflow_cycle_bfs <- function(faasr, start_node) {
+  action_list <- faasr$ActionList
+  if (is.null(action_list) || !length(action_list)) {
+    stop("invalid action list")
+  }
+  if (is.null(start_node) || !nzchar(start_node) || !(start_node %in% names(action_list))) {
+    stop("invalid start node")
+  }
+
+  # Build adjacency list
+
+  adj <- .faasr_build_adjacency(action_list)
+
+  # State tracking: 0=unvisited, 1=in_progress, 2=done
+  state <- new.env(parent = emptyenv())
+  for (node in names(action_list)) {
+    assign(node, 0L, envir = state)
+  }
+
+  # BFS queue - each entry is list(node, phase) where phase="enter" or "exit"
+  queue <- list(list(node = start_node, phase = "enter"))
+
+  while (length(queue) > 0) {
+    # Pop from front
+    item <- queue[[1]]
+    queue <- queue[-1]
+
+    node <- item$node
+    phase <- item$phase
+
+    # Validate node exists
+    if (!(node %in% names(action_list))) {
+      stop(sprintf("invalid function trigger: %s", node))
+    }
+
+    current_state <- get(node, envir = state)
+
+    if (phase == "enter") {
+      if (current_state == 1L) {
+        # Already in progress - found a cycle (back edge)
+        stop("cycle detected")
+      }
+      if (current_state == 2L) {
+        # Already fully processed - skip
+        next
+      }
+
+      # Mark as in_progress
+      assign(node, 1L, envir = state)
+
+      # Add exit phase to front of queue (will be processed after all successors)
+      queue <- c(list(list(node = node, phase = "exit")), queue)
+
+      # Add all successors to front of queue (process depth-first within BFS)
+      successors <- adj[[node]]
+      if (!is.null(successors) && length(successors) > 0) {
+        for (succ in rev(successors)) {
+          succ_state <- get(succ, envir = state)
+          if (succ_state == 1L) {
+            # Successor is in_progress - cycle detected
+            stop("cycle detected")
+          }
+          if (succ_state == 0L) {
+            # Add unvisited successors to front
+            queue <- c(list(list(node = succ, phase = "enter")), queue)
+          }
+        }
+      }
+
+    } else if (phase == "exit") {
+      # Mark as done
+      assign(node, 2L, envir = state)
+    }
+  }
+
+  TRUE
+}
+
+# ============================================================================
+# Reverse Dependency and Readiness Checking
+# ============================================================================
+
+#' @name .faasr_build_reverse_deps
+#' @title Build reverse dependency map
+#' @description
+#' Builds a map showing which actions each action depends on (its predecessors).
+#' Only includes UNCONDITIONAL dependencies - conditional branches are handled dynamically.
+#' @param action_list List containing the workflow action definitions
+#' @return Named list where each element is a character vector of predecessor action names
+#' @keywords internal
+.faasr_build_reverse_deps <- function(action_list) {
+  reverse_deps <- list()
+
+  # Initialize all actions with empty dependency list
+  for (action_name in names(action_list)) {
+    reverse_deps[[action_name]] <- character()
+  }
+
+  # Scan all actions to find unconditional InvokeNext edges
+  for (action_name in names(action_list)) {
+    nx <- action_list[[action_name]]$InvokeNext %||% list()
+
+    if (is.character(nx)) {
+      # All string successors are unconditional dependencies
+      for (succ in nx) {
+        succ_name <- sub("\\(.*$", "", succ)
+        if (succ_name %in% names(reverse_deps)) {
+          reverse_deps[[succ_name]] <- c(reverse_deps[[succ_name]], action_name)
+        }
+      }
+    } else if (is.list(nx)) {
+      for (item in nx) {
+        if (is.character(item)) {
+          # String items in list are unconditional
+          succ_name <- sub("\\(.*$", "", item)
+          if (succ_name %in% names(reverse_deps)) {
+            reverse_deps[[succ_name]] <- c(reverse_deps[[succ_name]], action_name)
+          }
+        }
+        # Skip list items (conditionals) - they're handled dynamically
+      }
+    }
+  }
+
+  # Remove duplicates
+  for (action_name in names(reverse_deps)) {
+    reverse_deps[[action_name]] <- unique(reverse_deps[[action_name]])
+  }
+
+  reverse_deps
+}
+
+#' @name .faasr_check_ready_simple
+#' @title Check if action is ready to execute
+#' @description
+#' Checks if all required predecessors have completed by looking at the completed set.
+#' Only waits for predecessors that have been enqueued (added to execution plan).
+#' This handles conditional branching where some predecessors may never execute.
+#' @param action_name Character string name of the action to check
+#' @param reverse_deps Named list mapping actions to their predecessor actions
+#' @param completed Character vector of completed execution keys
+#' @param enqueued_actions Character vector of action names that have been enqueued
+#' @return TRUE if ready to execute, FALSE otherwise
+#' @keywords internal
+.faasr_check_ready_simple <- function(action_name, reverse_deps, completed, enqueued_actions) {
+  # Get predecessors for this action
+  preds <- reverse_deps[[action_name]]
+
+  # If no predecessors, ready to execute
+  if (length(preds) == 0) return(TRUE)
+
+  # Check if all predecessors that have been enqueued have completed
+  # (Ignore predecessors that were never added to the execution plan due to conditionals)
+  for (pred in preds) {
+    # Skip if this predecessor was never enqueued (e.g., different conditional branch)
+    if (!(pred %in% enqueued_actions)) next
+
+    # Check if any rank of this predecessor has completed
+    pred_completed <- any(grepl(paste0("^", pred, "_rank_"), completed))
+    if (!pred_completed) {
+      return(FALSE)
+    }
+  }
+
+  TRUE
+}
+
+#' @name .faasr_configuration_check_simple
+#' @title Simplified FaaSr workflow configuration check
+#' @description
+#' Validates a FaaSr workflow configuration for JSON schema compliance and cycle detection.
+#' Unlike the full faasr_configuration_check, this does not check predecessor consistency
+#' because the simplified execution approach handles mixed predecessors correctly.
+#' @param faasr List containing the parsed workflow configuration
+#' @param state_dir Character string path to the state directory
+#' @return TRUE if configuration is valid, error message string otherwise
+#' @keywords internal
+.faasr_configuration_check_simple <- function(faasr, state_dir) {
+  # Basic JSON sanity
+  if (is.null(faasr$ActionList) || is.null(faasr$FunctionInvoke)) {
+    return("JSON parsing error")
+  }
+
+  # JSON schema validation if jsonvalidate is available
+  # Try multiple locations for schema.json
+  schema_file <- system.file("schema.json", package = "FaaSr", mustWork = FALSE)
+  if (!nzchar(schema_file) || !file.exists(schema_file)) {
+    schema_file <- file.path(tempdir(), "FaaSr_schema.json")
+  }
+  if (!file.exists(schema_file)) {
+    schema_file <- file.path(getwd(), "schema.json")
+  }
+  if (file.exists(schema_file) && requireNamespace("jsonvalidate", quietly = TRUE)) {
+    json_txt <- try(jsonlite::toJSON(faasr, auto_unbox = TRUE), silent = TRUE)
+    if (!inherits(json_txt, "try-error")) {
+      ok <- try(jsonvalidate::json_validate(json = json_txt, schema = schema_file, verbose = TRUE), silent = TRUE)
+      if (!inherits(ok, "try-error") && isFALSE(ok)) {
+        # Get detailed error message for debugging
+        error_result <- try({
+          jsonvalidate::json_validate(json = json_txt, schema = schema_file, 
+                                     verbose = TRUE, error = TRUE)
+        }, silent = TRUE)
+        if (inherits(error_result, "try-error")) {
+          # Extract the actual error message from the try-error object
+          error_msg <- gsub("^Error.*?: ", "", as.character(error_result))
+          return(paste0("JSON schema validation failed:\n", error_msg))
+        }
+        return("JSON parsing error")
+      }
+    }
+  }
+
+  # Workflow cycle check (BFS on ActionList graph)
+  graph_ok <- try(.faasr_check_workflow_cycle_bfs(faasr, faasr$FunctionInvoke), silent = TRUE)
+  if (inherits(graph_ok, "try-error")) {
+    return("cycle errors")
+  }
+
+  # Predecessor type consistency check
+  # While the enqueued tracking approach technically handles mixed predecessors
+  # without deadlocking, mixing unconditional and conditional predecessors
+  # creates ambiguous workflow semantics that should be flagged as an error
+  pred_consistency <- try(.faasr_check_predecessor_consistency(faasr$ActionList), silent = TRUE)
+  if (inherits(pred_consistency, "try-error")) {
+    return(as.character(pred_consistency))
+  }
+
+  TRUE
+}
+
+#' @name .faasr_check_predecessor_consistency
+#' @title Check predecessor type consistency in workflow
+#' @description
+#' Internal function to validate that all predecessors of each function are of the same type.
+#' Predecessors must be either all unconditional, all from the same conditional source,
+#' or no predecessors (starting node). Mixed predecessor types create ambiguous semantics.
+#' @param action_list List containing the workflow action definitions
+#' @return TRUE if consistent, stops with error if inconsistent
+#' @keywords internal
+.faasr_check_predecessor_consistency <- function(action_list) {
+  for (target_func in names(action_list)) {
+    predecessors <- .faasr_find_predecessors_with_types(action_list, target_func)
+    
+    if (length(predecessors) == 0) {
+      # No predecessors - this is valid (starting node)
+      next
+    }
+    
+    # Check if all predecessors are of the same type
+    pred_types <- sapply(predecessors, function(p) p$type)
+    unique_types <- unique(pred_types)
+    
+    if (length(unique_types) > 1) {
+      # Mixed predecessor types - this is invalid
+      unconditional_preds <- predecessors[pred_types == "unconditional"]
+      conditional_preds <- predecessors[pred_types == "conditional"]
+      
+      error_msg <- sprintf("Function '%s' has mixed predecessor types:\n", target_func)
+      
+      if (length(unconditional_preds) > 0) {
+        unconditional_names <- sapply(unconditional_preds, function(p) p$name)
+        error_msg <- paste0(error_msg, "  - Unconditional: ", paste(unconditional_names, collapse = ", "), "\n")
+      }
+      
+      if (length(conditional_preds) > 0) {
+        conditional_sources <- unique(sapply(conditional_preds, function(p) p$source))
+        for (source in conditional_sources) {
+          source_preds <- conditional_preds[sapply(conditional_preds, function(p) p$source == source)]
+          source_names <- sapply(source_preds, function(p) p$name)
+          source_branches <- unique(sapply(source_preds, function(p) p$branch))
+          error_msg <- paste0(error_msg, "  - Conditional from '", source, "' (", paste(source_branches, collapse = ", "), "): ", paste(source_names, collapse = ", "), "\n")
+        }
+      }
+      
+      error_msg <- paste0(error_msg, "\nAll predecessors must be either:\n")
+      error_msg <- paste0(error_msg, "1. All unconditional edges, OR\n")
+      error_msg <- paste0(error_msg, "2. All from the same conditional source (same action, same or different branches), OR\n")
+      error_msg <- paste0(error_msg, "3. No predecessors (starting node)")
+      
+      stop(error_msg)
+    }
+  }
   
-  remote_folder <- sub("^/+", "", sub("/+$", "", remote_folder))
-  remote_file <- sub("^/+", "", sub("/+$", "", remote_file))
-  remote_folder <- paste0("/faasr_data/files/", remote_folder)
-  delete_file_s3 <- paste0(remote_folder, "/", remote_file)
-
-  unlink(delete_file_s3, recursive=TRUE)
-
+  TRUE
 }
 
-# local test function for faasr_log
-faasr_docker_local_test_log <- function(log_message){
-  # TBD
-}
-
-# local test function for faasr_log
-faasr_docker_local_test_arrow_s3_bucket <- function(server_name=NULL, faasr_prefix=""){
-  s3 <- arrow::SubTreeFileSystem$create("/faasr_data/files")
-  return(s3)
-}
-
-# installing dependencies
-faasr_dependency_install <- function(faasr, funcname, new_lib=NULL){
-
-  # install CRAN packages
-  packages <- faasr$FunctionCRANPackage[[funcname]]
-  faasr_install_cran(packages, lib_path=new_lib)
-
-  # install Git packages
-  ghpackages <- faasr$FunctionGitHubPackage[[funcname]]
-  faasr_install_git_package(ghpackages, lib_path=new_lib)
-
-  return(TRUE)
-}
-
-# Sub function for faasr_dependency_install
-faasr_install_cran <- function(packages, lib_path=NULL){
-  if (length(packages)==0){
-  } else{
-    for (package in packages){
-	    utils::install.packages(package, lib=lib_path)
-	  }
+#' @name .faasr_find_predecessors_with_types
+#' @title Find predecessor functions with their types in workflow
+#' @description
+#' Internal function to find all predecessor functions for a given target function
+#' and categorize them by type (unconditional vs conditional).
+#' @param action_list List containing the workflow action definitions
+#' @param target_func Character string name of the target function
+#' @return List of predecessor information with name, type, source, and branch
+#' @keywords internal
+.faasr_find_predecessors_with_types <- function(action_list, target_func) {
+  predecessors <- list()
+  
+  for (nm in names(action_list)) {
+    nx <- action_list[[nm]]$InvokeNext %||% list()
+    
+    if (is.character(nx)) {
+      # Unconditional edge
+      next_names <- sub("\\(.*$", "", nx)
+      if (any(next_names == target_func)) {
+        predecessors <- c(predecessors, list(list(
+          name = nm,
+          type = "unconditional",
+          source = nm,
+          branch = NA
+        )))
+      }
+    } else if (is.list(nx)) {
+      for (item in nx) {
+        if (is.character(item)) {
+          # Unconditional edge in list
+          next_names <- sub("\\(.*$", "", item)
+          if (any(next_names == target_func)) {
+            predecessors <- c(predecessors, list(list(
+              name = nm,
+              type = "unconditional",
+              source = nm,
+              branch = NA
+            )))
+          }
+        } else if (is.list(item)) {
+          # Conditional edge
+          if (!is.null(item$True)) {
+            true_names <- sub("\\(.*$", "", unlist(item$True))
+            if (any(true_names == target_func)) {
+              predecessors <- c(predecessors, list(list(
+                name = nm,
+                type = "conditional",
+                source = nm,
+                branch = "True"
+              )))
+            }
+          }
+          if (!is.null(item$False)) {
+            false_names <- sub("\\(.*$", "", unlist(item$False))
+            if (any(false_names == target_func)) {
+              predecessors <- c(predecessors, list(list(
+                name = nm,
+                type = "conditional",
+                source = nm,
+                branch = "False"
+              )))
+            }
+          }
+        }
+      }
+    }
   }
-}
-
-# Sub function for faasr_dependency_install
-# function to help install "git packages"
-faasr_install_git_package <- function(ghpackages, lib_path=NULL){
-  if (length(ghpackages)==0){
-  } else{
-    for (ghpackage in ghpackages){
-	    withr::with_libpaths(new=lib_path, devtools::install_github(ghpackage, force=TRUE))
-	  }
+  
+  # Remove duplicates based on name
+  unique_predecessors <- list()
+  seen_names <- character()
+  for (pred in predecessors) {
+    if (!(pred$name %in% seen_names)) {
+      unique_predecessors <- c(unique_predecessors, list(pred))
+      seen_names <- c(seen_names, pred$name)
+    }
   }
+  
+  unique_predecessors
 }
-

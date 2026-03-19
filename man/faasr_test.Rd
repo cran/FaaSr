@@ -2,27 +2,17 @@
 % Please edit documentation in R/faasr_test.R
 \name{faasr_test}
 \alias{faasr_test}
-\title{faasr_test}
+\title{FaaSr test execution}
 \usage{
-faasr_test(
-  use_docker = list(use = FALSE, version = docker_default_version, image =
-    docker_default_image)
-)
+faasr_test(json_path)
 }
 \arguments{
-\item{use_docker}{a list of docker configuration - use, version and image.}
+\item{json_path}{path to workflow JSON}
 }
 \value{
-return nothing / executes the FaaS
+TRUE if all functions run successfully; stops on error
 }
 \description{
-Client tools for local tests
-Users can use local test by using both for Docker and local file system
-}
-\examples{
-if (interactive()){
-test <- faasr("test.json", "env")
-test$faasr_test()
-test$faasr_test(use_docker=list(use=TRUE, version="test", image="docker.io/test/test-docker:image"))
-}
+Workflow execution that dynamically handles conditional branching
+and predecessor dependencies without precomputation.
 }
